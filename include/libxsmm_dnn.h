@@ -126,10 +126,14 @@ typedef enum libxsmm_dnn_buffer_type {
   LIBXSMM_DNN_REGULAR_INPUT,
   /** gradient input buffer */
   LIBXSMM_DNN_GRADIENT_INPUT,
+  /** transposed gradient input buffer */
+  LIBXSMM_DNN_TRANSPOSE_GRADIENT_INPUT,
   /** regular output buffer */
   LIBXSMM_DNN_REGULAR_OUTPUT,
   /** gradient output buffer */
   LIBXSMM_DNN_GRADIENT_OUTPUT,
+  /** transpose gradient output buffer */
+  LIBXSMM_DNN_TRANSPOSE_GRADIENT_OUTPUT,
   /** general input type */
   LIBXSMM_DNN_INPUT,
   /** general output type */
@@ -142,6 +146,8 @@ typedef enum libxsmm_dnn_filter_type {
   LIBXSMM_DNN_REGULAR_FILTER,
   /* gradient filter */
   LIBXSMM_DNN_GRADIENT_FILTER,
+  /* transposed filter */
+  LIBXSMM_DNN_TRANSPOSE_FILTER,
   /** general filter type */
   LIBXSMM_DNN_FILTER
 } libxsmm_dnn_filter_type;
