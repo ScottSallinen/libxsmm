@@ -2210,7 +2210,7 @@ LIBXSMM_API_DEFINITION libxsmm_dnn_err_t libxsmm_dnn_transpose_filter(libxsmm_dn
   int ofm1, ifm1, kj, ki, ifm2, ofm2;
 
   /* check for filter type */
-  if ( (type != LIBXSMM_DNN_REGULAR_FILTER) ) {  //TODO(scott): Check transpose here?
+  if ( (type != LIBXSMM_DNN_REGULAR_FILTER) ) {
     status = LIBXSMM_DNN_ERR_UNKNOWN_FILTER_TYPE;
     return status;
   }

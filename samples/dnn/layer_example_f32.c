@@ -52,6 +52,8 @@
 #define USE_FUSED_BIAS
 #endif
 
+#define TRANSPOSE_COMPUTE
+
 #if defined(_WIN32) || defined(__CYGWIN__)
 /* note: later on, this leads to (correct but) different than expected norm-values */
 # define drand48() ((double)rand() / RAND_MAX)
@@ -399,9 +401,9 @@ int main(int argc, char* argv[])
 {
   float *naive_input, *naive_output, *naive_output_save, *naive_filter, *naive_filter_wu, *naive_output_bp, *naive_output_wu, *naive_libxsmm_output;
   float *naive_libxsmm_input, *naive_libxsmm_filter, *naive_input_save, *naive_filter_save, *naive_filter_kcrs;
-  float *input_nhwc, *output_nhwc, *filter_rsck, *naive_output_nhwc, *naive_input_nhwc;
+  float *input_nhwc, *output_nhwc, *filter_rsck, *trans_filter_rsck, *naive_output_nhwc, *naive_input_nhwc;
   float *naive_bias, *bias_libxsmm, *naive_dbias, *dbias_libxsmm, *bias_nhwc, *dbias_nhwc;
-  float *input_libxsmm, *filter_libxsmm, *output_libxsmm, *dinput_libxsmm, *dfilter_libxsmm, *doutput_libxsmm;
+  float *input_libxsmm, *filter_libxsmm, *tfilter_libxsmm, *output_libxsmm, *dinput_libxsmm, *dfilter_libxsmm, *doutput_libxsmm;
   int ifhp, ifwp, ofhp, ofwp, ofh, ofw;
   int stride_h, stride_w, pad_h, pad_w, pad_h_in, pad_w_in, pad_h_out, pad_w_out;
   naive_conv_t naive_param;
@@ -444,6 +446,7 @@ int main(int argc, char* argv[])
   libxsmm_dnn_buffer* libxsmm_input;
   libxsmm_dnn_buffer* libxsmm_output;
   libxsmm_dnn_filter* libxsmm_filter;
+  libxsmm_dnn_filter* libxsmm_trans_filter;
   libxsmm_dnn_buffer* libxsmm_dinput;
   libxsmm_dnn_buffer* libxsmm_doutput;
   libxsmm_dnn_filter* libxsmm_dfilter;
@@ -571,8 +574,10 @@ int main(int argc, char* argv[])
   naive_output_nhwc     = (float*)libxsmm_aligned_malloc( nImg*nOfm*ofhp*ofwp*sizeof(float), 2097152);
   naive_input_nhwc      = (float*)libxsmm_aligned_malloc( nImg*nIfm*ifhp*ifwp*sizeof(float), 2097152);
   filter_rsck           = (float*)libxsmm_aligned_malloc( nOfm*nIfm*kh*kw*    sizeof(float), 2097152);
+  trans_filter_rsck     = (float*)libxsmm_aligned_malloc( nOfm*nIfm*kh*kw*    sizeof(float), 2097152);
   input_libxsmm         = (float*)libxsmm_aligned_malloc( nImg*nIfm*ifhp*ifwp*sizeof(float), 2097152);
   filter_libxsmm        = (float*)libxsmm_aligned_malloc( nOfm*nIfm*kh*kw*    sizeof(float), 2097152);
+  tfilter_libxsmm       = (float*)libxsmm_aligned_malloc( nOfm*nIfm*kh*kw*    sizeof(float), 2097152);
   output_libxsmm        = (float*)libxsmm_aligned_malloc( nImg*nOfm*ofhp*ofwp*sizeof(float), 2097152);
   dinput_libxsmm        = (float*)libxsmm_aligned_malloc( nImg*nIfm*ifhp*ifwp*sizeof(float), 2097152);
   dfilter_libxsmm       = (float*)libxsmm_aligned_malloc( nOfm*nIfm*kh*kw*    sizeof(float), 2097152);
@@ -698,6 +703,10 @@ int main(int argc, char* argv[])
     CHKERR_LIBXSMM_DNN( status );
     libxsmm_filter =  libxsmm_dnn_link_filter( libxsmm_handle, LIBXSMM_DNN_FILTER, filter_libxsmm,  LIBXSMM_DNN_TENSOR_FORMAT_LIBXSMM_PTR, &status );
     CHKERR_LIBXSMM_DNN( status );
+    #if defined(TRANSPOSE_COMPUTE)
+    libxsmm_trans_filter =  libxsmm_dnn_link_filter( libxsmm_handle, LIBXSMM_DNN_FILTER, tfilter_libxsmm,  LIBXSMM_DNN_TENSOR_FORMAT_LIBXSMM_PTR, &status );
+    CHKERR_LIBXSMM_DNN( status );
+    #endif
     libxsmm_dinput =  libxsmm_dnn_link_buffer( libxsmm_handle, LIBXSMM_DNN_INPUT,  dinput_libxsmm,  LIBXSMM_DNN_TENSOR_FORMAT_LIBXSMM_PTR, &status );
     CHKERR_LIBXSMM_DNN( status );
     libxsmm_doutput = libxsmm_dnn_link_buffer( libxsmm_handle, LIBXSMM_DNN_OUTPUT, doutput_libxsmm, LIBXSMM_DNN_TENSOR_FORMAT_LIBXSMM_PTR, &status );
@@ -715,6 +724,9 @@ int main(int argc, char* argv[])
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_copyin_buffer( libxsmm_input,  (void*)naive_input_save,  LIBXSMM_DNN_TENSOR_FORMAT_NCHW ) );
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_copyin_buffer( libxsmm_output, (void*)naive_output_save, LIBXSMM_DNN_TENSOR_FORMAT_NCHW ) );
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_copyin_filter( libxsmm_filter, (void*)naive_filter,      LIBXSMM_DNN_TENSOR_FORMAT_KCRS ) );
+    #if defined(TRANSPOSE_COMPUTE)  // TODO(Scott): Copy necessary?
+    CHKERR_LIBXSMM_DNN( libxsmm_dnn_copyin_filter( libxsmm_trans_filter, (void*)naive_filter,      LIBXSMM_DNN_TENSOR_FORMAT_KCRS ) );
+    #endif
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_copyin_bias  ( libxsmm_bias,   (void*)naive_bias,        LIBXSMM_DNN_TENSOR_FORMAT_NCHW ) );
 
     /* bind buffers and filter to handle */
@@ -723,6 +735,9 @@ int main(int argc, char* argv[])
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_bind_buffer( libxsmm_handle, libxsmm_output,  LIBXSMM_DNN_REGULAR_OUTPUT ) );
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_bind_buffer( libxsmm_handle, libxsmm_doutput, LIBXSMM_DNN_GRADIENT_OUTPUT ) );
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_bind_filter( libxsmm_handle, libxsmm_filter,  LIBXSMM_DNN_REGULAR_FILTER ) );
+    #if defined(TRANSPOSE_COMPUTE)
+    CHKERR_LIBXSMM_DNN( libxsmm_dnn_bind_filter( libxsmm_handle, libxsmm_trans_filter,  LIBXSMM_DNN_TRANSPOSE_FILTER ) );
+    #endif
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_bind_filter( libxsmm_handle, libxsmm_dfilter, LIBXSMM_DNN_GRADIENT_FILTER ) );
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_bind_bias  ( libxsmm_handle, libxsmm_bias,    LIBXSMM_DNN_REGULAR_BIAS ) );
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_bind_bias  ( libxsmm_handle, libxsmm_dbias,   LIBXSMM_DNN_GRADIENT_BIAS ) );
@@ -942,6 +957,10 @@ int main(int argc, char* argv[])
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_release_buffer( libxsmm_handle, LIBXSMM_DNN_REGULAR_OUTPUT ) );
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_release_buffer( libxsmm_handle, LIBXSMM_DNN_GRADIENT_OUTPUT ) );
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_release_filter( libxsmm_handle, LIBXSMM_DNN_REGULAR_FILTER ) );
+    #if defined(TRANSPOSE_COMPUTE)
+    CHKERR_LIBXSMM_DNN( libxsmm_dnn_release_filter( libxsmm_handle, LIBXSMM_DNN_TRANSPOSE_FILTER ) );
+    CHKERR_LIBXSMM_DNN( libxsmm_dnn_destroy_filter( libxsmm_trans_filter ) );
+    #endif
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_release_filter( libxsmm_handle, LIBXSMM_DNN_GRADIENT_FILTER ) );
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_release_bias( libxsmm_handle, LIBXSMM_DNN_REGULAR_BIAS ) );
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_release_bias( libxsmm_handle, LIBXSMM_DNN_GRADIENT_BIAS ) );
@@ -1010,6 +1029,10 @@ int main(int argc, char* argv[])
     CHKERR_LIBXSMM_DNN( status );
     libxsmm_filter = libxsmm_dnn_link_filter( libxsmm_handle, LIBXSMM_DNN_FILTER, filter_rsck, LIBXSMM_DNN_TENSOR_FORMAT_RSCK_PTR, &status );
     CHKERR_LIBXSMM_DNN( status );
+    #if defined(TRANSPOSE_COMPUTE)
+    libxsmm_filter = libxsmm_dnn_link_filter( libxsmm_handle, LIBXSMM_DNN_FILTER, trans_filter_rsck, LIBXSMM_DNN_TENSOR_FORMAT_RSCK_PTR, &status );
+    CHKERR_LIBXSMM_DNN( status );
+    #endif
     libxsmm_bias =    libxsmm_dnn_link_bias(   libxsmm_handle, LIBXSMM_DNN_BIAS,   bias_nhwc,    LIBXSMM_DNN_TENSOR_FORMAT_NHWC_PTR, &status );
     CHKERR_LIBXSMM_DNN( status );
     libxsmm_dbias =   libxsmm_dnn_link_bias(   libxsmm_handle, LIBXSMM_DNN_BIAS,   dbias_nhwc,   LIBXSMM_DNN_TENSOR_FORMAT_NHWC_PTR, &status );
@@ -1021,6 +1044,9 @@ int main(int argc, char* argv[])
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_bind_buffer( libxsmm_handle, libxsmm_output, LIBXSMM_DNN_REGULAR_OUTPUT ) );
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_bind_buffer( libxsmm_handle, libxsmm_output, LIBXSMM_DNN_GRADIENT_OUTPUT ) );
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_bind_filter( libxsmm_handle, libxsmm_filter, LIBXSMM_DNN_REGULAR_FILTER ) );
+    #if defined(TRANSPOSE_COMPUTE)
+    CHKERR_LIBXSMM_DNN( libxsmm_dnn_bind_filter( libxsmm_handle, libxsmm_trans_filter, LIBXSMM_DNN_TRANSPOSE_FILTER ) );
+    #endif
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_bind_filter( libxsmm_handle, libxsmm_filter, LIBXSMM_DNN_GRADIENT_FILTER ) );
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_bind_bias( libxsmm_handle, libxsmm_bias, LIBXSMM_DNN_REGULAR_BIAS ) );
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_bind_bias( libxsmm_handle, libxsmm_dbias, LIBXSMM_DNN_GRADIENT_BIAS ) );
@@ -1240,6 +1266,10 @@ int main(int argc, char* argv[])
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_release_buffer( libxsmm_handle, LIBXSMM_DNN_REGULAR_OUTPUT ) );
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_release_buffer( libxsmm_handle, LIBXSMM_DNN_GRADIENT_OUTPUT ) );
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_release_filter( libxsmm_handle, LIBXSMM_DNN_REGULAR_FILTER ) );
+    #if defined(TRANSPOSE_COMPUTE)
+    CHKERR_LIBXSMM_DNN( libxsmm_dnn_release_filter( libxsmm_handle, LIBXSMM_DNN_TRANSPOSE_FILTER ) );
+    CHKERR_LIBXSMM_DNN( libxsmm_dnn_destroy_filter( libxsmm_trans_filter ) );
+    #endif
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_release_filter( libxsmm_handle, LIBXSMM_DNN_GRADIENT_FILTER ) );
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_destroy_buffer( libxsmm_input ) );
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_destroy_buffer( libxsmm_output ) );
@@ -1307,6 +1337,10 @@ int main(int argc, char* argv[])
     CHKERR_LIBXSMM_DNN( status );
     libxsmm_filter = libxsmm_dnn_link_filter( libxsmm_handle, LIBXSMM_DNN_FILTER, filter_libxsmm, LIBXSMM_DNN_TENSOR_FORMAT_LIBXSMM_PTR, &status );
     CHKERR_LIBXSMM_DNN( status );
+    #if defined(TRANSPOSE_COMPUTE)
+    libxsmm_trans_filter = libxsmm_dnn_link_filter( libxsmm_handle, LIBXSMM_DNN_FILTER, tfilter_libxsmm, LIBXSMM_DNN_TENSOR_FORMAT_LIBXSMM_PTR, &status );
+    #endif
+    CHKERR_LIBXSMM_DNN( status );
     libxsmm_bias =    libxsmm_dnn_link_bias(   libxsmm_handle, LIBXSMM_DNN_BIAS,   bias_nhwc,    LIBXSMM_DNN_TENSOR_FORMAT_NHWC_PTR, &status );
     CHKERR_LIBXSMM_DNN( status );
     libxsmm_dbias =   libxsmm_dnn_link_bias(   libxsmm_handle, LIBXSMM_DNN_BIAS,   dbias_nhwc,   LIBXSMM_DNN_TENSOR_FORMAT_NHWC_PTR, &status );
@@ -1321,6 +1355,9 @@ int main(int argc, char* argv[])
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_bind_buffer( libxsmm_handle, libxsmm_output, LIBXSMM_DNN_REGULAR_OUTPUT ) );
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_bind_buffer( libxsmm_handle, libxsmm_output, LIBXSMM_DNN_GRADIENT_OUTPUT ) );
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_bind_filter( libxsmm_handle, libxsmm_filter, LIBXSMM_DNN_REGULAR_FILTER ) );
+    #if defined(TRANSPOSE_COMPUTE)
+    CHKERR_LIBXSMM_DNN( libxsmm_dnn_bind_filter( libxsmm_handle, libxsmm_trans_filter, LIBXSMM_DNN_TRANSPOSE_FILTER ) );
+    #endif
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_bind_filter( libxsmm_handle, libxsmm_filter, LIBXSMM_DNN_GRADIENT_FILTER ) );
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_bind_bias( libxsmm_handle, libxsmm_bias, LIBXSMM_DNN_REGULAR_BIAS ) );
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_bind_bias( libxsmm_handle, libxsmm_dbias, LIBXSMM_DNN_GRADIENT_BIAS ) );
@@ -1540,6 +1577,10 @@ int main(int argc, char* argv[])
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_release_buffer( libxsmm_handle, LIBXSMM_DNN_REGULAR_OUTPUT ) );
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_release_buffer( libxsmm_handle, LIBXSMM_DNN_GRADIENT_OUTPUT ) );
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_release_filter( libxsmm_handle, LIBXSMM_DNN_REGULAR_FILTER ) );
+    #if defined(TRANSPOSE_COMPUTE)
+    CHKERR_LIBXSMM_DNN( libxsmm_dnn_release_filter( libxsmm_handle, LIBXSMM_DNN_TRANSPOSE_FILTER ) );
+    CHKERR_LIBXSMM_DNN( libxsmm_dnn_destroy_filter( libxsmm_trans_filter ) );
+    #endif
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_release_filter( libxsmm_handle, LIBXSMM_DNN_GRADIENT_FILTER ) );
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_release_bias( libxsmm_handle, LIBXSMM_DNN_REGULAR_BIAS ) );
     CHKERR_LIBXSMM_DNN( libxsmm_dnn_release_bias( libxsmm_handle, LIBXSMM_DNN_GRADIENT_BIAS ) );
@@ -1572,6 +1613,7 @@ int main(int argc, char* argv[])
   libxsmm_free(filter_rsck);
   libxsmm_free(input_libxsmm);
   libxsmm_free(filter_libxsmm);
+  libxsmm_free(tfilter_libxsmm);
   libxsmm_free(output_libxsmm);
   libxsmm_free(dinput_libxsmm);
   libxsmm_free(dfilter_libxsmm);
