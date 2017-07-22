@@ -29,7 +29,7 @@
 /* Alexander Heinecke, Hans Pabst (Intel Corp.)
  ******************************************************************************/
 
-int imgofm1, img, ofm1, ifm1, oj, oi, ofm2;
+int imgofm1, img, ofm1, ifm1, oj, oi, ofm2, ifm2, kj, ki, ifm1ofm1;
 #if !defined(LIBXSMM_DNN_CONV_FWD_INTERNAL_STRIDE_ONE)
 int ij, ii;
 #endif
@@ -78,6 +78,10 @@ if (handle->datatype != handle->datatype_itm) {
   LIBXSMM_VLA_DECL(6, element_input_type, output_lp, out_lp, handle->blocksofm, handle->ofhp, handle->ofwp, handle->ofmblock, handle->fm_lp_block);
   LIBXSMM_VLA_DECL(6, const element_input_type, input, (element_input_type*)handle->reg_input->data, handle->blocksifm, handle->ifhp, handle->ifwp, handle->ifmblock, handle->fm_lp_block);
   LIBXSMM_VLA_DECL(7, const element_filter_type, weight, (element_filter_type*)handle->reg_filter->data, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ifmblock, handle->ofmblock, handle->fm_lp_block);
+  #if defined(TRANSPOSE_COMPUTE)
+  /* Add transposed filter */
+  LIBXSMM_VLA_DECL(7, element_filter_type, tr_weight_out, (element_filter_type*)handle->trans_filter->data, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ofmblock, handle->ifmblock, handle->fm_lp_block);
+  #endif
   /* JIT kernel function pointers */
   libxsmm_convfunction jitted_conv_fp_one, jitted_conv_fp_two, jitted_conv_fp_zero;
 
@@ -686,4 +690,29 @@ if (handle->datatype != handle->datatype_itm) {
   } else {
     status = LIBXSMM_DNN_ERR_UNSUPPORTED_ARCH;
   }
+  #if defined(TRANSPOSE_COMPUTE)
+  /* Transpose the filters */
+  if (handle->fm_lp_block == 1 && thr_begin == 0) {  // TODO(Scott): Parallelism. Previously set-up as imgofm1 collapsed; need to consider ifm1ofm1 collapsed.
+    for (ofm1 = 0; ofm1 < handle->blocksofm; ofm1++) {
+      for (ifm1 = 0; ifm1 < handle->blocksifm; ifm1++) {
+      //for (ifm1ofm1 = thr_begin; ifm1ofm1 < thr_end; ++ifm1ofm1) {
+        //ifm1 = ifm1ofm1/(handle->blocksofm);
+        //ofm1 = ifm1ofm1%(handle->blocksofm);
+        for (kj=0; kj < handle->desc.R; ++kj) {
+          for (ki=0; ki < handle->desc.S; ++ki) {
+            //TODO(Scott): Vectorize this.
+            for (ofm2 = 0; ofm2 < handle->ofmblock; ++ofm2) {
+              for (ifm2 = 0; ifm2 < handle->ifmblock; ++ifm2) {
+                  LIBXSMM_VLA_ACCESS(7, tr_weight_out, ofm1, ifm1, kj, ki, ofm2, ifm2, 0, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ofmblock, handle->ifmblock, handle->fm_lp_block) =
+                  LIBXSMM_VLA_ACCESS(7, weight,        ofm1, ifm1, kj, ki, ifm2, ofm2, 0, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ifmblock, handle->ofmblock, handle->fm_lp_block);
+              }
+            }
+          }
+        }
+      }
+    }
+  } else { /* If low precision */
+    //TODO(Scott): Low precision.
+  }
+  #endif
 }
