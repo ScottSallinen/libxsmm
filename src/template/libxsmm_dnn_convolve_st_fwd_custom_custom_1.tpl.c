@@ -29,7 +29,7 @@
 /* Alexander Heinecke, Hans Pabst (Intel Corp.)
  ******************************************************************************/
 #define TRANSPOSE_COMPUTE  //TODO(Scott): Temporary
-int imgofm1, img, ofm1, ifm1, oj, oi, ofm2, ifm2, kj, ki, ifm1ofm1;
+int imgofm1, img, ofm1, ifm1, oj, oi, ofm2, ifm2, kj, ki, ifm1ofm1, iki, ikj, i;
 #if !defined(LIBXSMM_DNN_CONV_FWD_INTERNAL_STRIDE_ONE)
 int ij, ii;
 #endif
@@ -79,6 +79,7 @@ if (handle->datatype != handle->datatype_itm) {
   LIBXSMM_VLA_DECL(6, const element_input_type, input, (element_input_type*)handle->reg_input->data, handle->blocksifm, handle->ifhp, handle->ifwp, handle->ifmblock, handle->fm_lp_block);
   LIBXSMM_VLA_DECL(7, const element_filter_type, weight, (element_filter_type*)handle->reg_filter->data, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ifmblock, handle->ofmblock, handle->fm_lp_block);
   #if defined(TRANSPOSE_COMPUTE)
+  float tmpbuf[16];
   /* Add transposed filter */
   LIBXSMM_VLA_DECL(7, element_filter_type, tr_weight_out, (element_filter_type*)handle->trans_filter->data, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ofmblock, handle->ifmblock, handle->fm_lp_block);
   #endif
@@ -108,6 +109,10 @@ if (handle->datatype != handle->datatype_itm) {
       for (imgofm1 = thr_begin; imgofm1 < thr_end; ++imgofm1) {
         img = imgofm1/(handle->blocksofm*handle->fm_lp_block);
         ofm1 = imgofm1%(handle->blocksofm*handle->fm_lp_block);
+#if defined(TRANSPOSE_COMPUTE)
+        ikj = (img/handle->desc.R)%(handle->desc.R*handle->desc.S);
+        iki = (img%handle->desc.S)%(handle->desc.R*handle->desc.S);
+#endif
 #if defined(INPUT_PADDING)
         if (prev_image != img) {
           /* The img has changed so we should copy all the ifms */
@@ -282,6 +287,24 @@ if (handle->datatype != handle->datatype_itm) {
 #endif
             }
           }
+          #if defined(TRANSPOSE_COMPUTE)
+          /* //TODO(Scott): Non-vector version. Delete this later.
+          for (ofm2 = 0; ofm2 < handle->ofmblock; ++ofm2) {
+            for (ifm2 = 0; ifm2 < handle->ifmblock; ++ifm2) {
+                LIBXSMM_VLA_ACCESS(7, tr_weight_out, ofm1, ifm1, ikj, iki, ofm2, ifm2, 0, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ofmblock, handle->ifmblock, handle->fm_lp_block) =
+                LIBXSMM_VLA_ACCESS(7, weight,        ofm1, ifm1, ikj, iki, ifm2, ofm2, 0, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ifmblock, handle->ofmblock, handle->fm_lp_block);
+            }
+          }*/
+          const element_filter_type* src = &LIBXSMM_VLA_ACCESS(7, weight,        ofm1, ifm1, ikj, iki, 0, 0, 0, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ifmblock, handle->ofmblock, handle->fm_lp_block);
+          element_filter_type*       dst = &LIBXSMM_VLA_ACCESS(7, tr_weight_out, ofm1, ifm1, ikj, iki, 0, 0, 0, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ofmblock, handle->ifmblock, handle->fm_lp_block);
+          for (ofm2 = 0; ofm2 < handle->ofmblock; ++ofm2) {  // 16x16 asumption! fm_lp_block assumption! img > R*S assumption!
+              #pragma unroll (16)
+              for (i = 0; i < 16; i++) {
+                tmpbuf[i] = src[i*16 + ofm2];
+              }
+              _mm512_stream_ps(dst + ofm2*16, _mm512_load_ps(&tmpbuf));
+          }
+          #endif
         }
         /* ReLU handling */
         if ( ((handle->fuse_ops & LIBXSMM_DNN_CONV_FUSE_RELU) > 0) ) {
@@ -321,6 +344,10 @@ if (handle->datatype != handle->datatype_itm) {
       for (imgofm1 = thr_begin; imgofm1 < thr_end; ++imgofm1) {
         img = imgofm1/(handle->blocksofm*handle->fm_lp_block);
         ofm1 = imgofm1%(handle->blocksofm*handle->fm_lp_block);
+#if defined(TRANSPOSE_COMPUTE)
+        ikj = (img/handle->desc.R)%(handle->desc.R*handle->desc.S);
+        iki = (img%handle->desc.S)%(handle->desc.R*handle->desc.S);
+#endif
 #if defined(INPUT_PADDING)
         if (prev_image != img) {
           /* The img has changed so we should copy all the ifms */
@@ -523,6 +550,24 @@ if (handle->datatype != handle->datatype_itm) {
 #endif
             }
           }
+          #if defined(TRANSPOSE_COMPUTE)
+          /* //TODO(Scott): Non-vector version. Delete this later.
+          for (ofm2 = 0; ofm2 < handle->ofmblock; ++ofm2) {
+            for (ifm2 = 0; ifm2 < handle->ifmblock; ++ifm2) {
+                LIBXSMM_VLA_ACCESS(7, tr_weight_out, ofm1, ifm1, ikj, iki, ofm2, ifm2, 0, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ofmblock, handle->ifmblock, handle->fm_lp_block) =
+                LIBXSMM_VLA_ACCESS(7, weight,        ofm1, ifm1, ikj, iki, ifm2, ofm2, 0, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ifmblock, handle->ofmblock, handle->fm_lp_block);
+            }
+          }*/
+          const element_filter_type* src = &LIBXSMM_VLA_ACCESS(7, weight,        ofm1, ifm1, ikj, iki, 0, 0, 0, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ifmblock, handle->ofmblock, handle->fm_lp_block);
+          element_filter_type*       dst = &LIBXSMM_VLA_ACCESS(7, tr_weight_out, ofm1, ifm1, ikj, iki, 0, 0, 0, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ofmblock, handle->ifmblock, handle->fm_lp_block);
+          for (ofm2 = 0; ofm2 < handle->ofmblock; ++ofm2) {  // 16x16 asumption! fm_lp_block assumption! img > R*S assumption!
+              #pragma unroll (16)
+              for (i = 0; i < 16; i++) {
+                tmpbuf[i] = src[i*16 + ofm2];
+              }
+              _mm512_stream_ps(dst + ofm2*16, _mm512_load_ps(&tmpbuf));
+          }
+          #endif
         }
         /* ReLU handling */
         if ( ((handle->fuse_ops & LIBXSMM_DNN_CONV_FUSE_RELU) > 0) ) {
@@ -690,7 +735,7 @@ if (handle->datatype != handle->datatype_itm) {
   } else {
     status = LIBXSMM_DNN_ERR_UNSUPPORTED_ARCH;
   }
-  #if defined(TRANSPOSE_COMPUTE)
+  #if 0// defined(TRANSPOSE_COMPUTE) //TODO(Scott): If fusion is better, delete naive version.
   /* Transpose the filters */
   if (handle->fm_lp_block == 1 && thr_begin == 0) {  // TODO(Scott): Parallelism. Previously set-up as imgofm1 collapsed; need to consider ifm1ofm1 collapsed.
     for (ofm1 = 0; ofm1 < handle->blocksofm; ofm1++) {
