@@ -28,7 +28,7 @@
 ******************************************************************************/
 /* Ankush Mandal, Rajkishore Barik, Alexander Heinecke (Intel Corp.)
 ******************************************************************************/
-
+#define TRANSPOSE_COMPUTE  //TODO(Scott): Temporary
 int imgifm1, img, ofm1, ifm1, oj, oi, ij, ii, kj, ki, ifm2, ofm2, ifm1ofm1, lp, ifm1lpblock;
 
 /* computing first logical thread */
@@ -72,9 +72,15 @@ LIBXSMM_VLA_DECL(6, element_output_type, del_out, out, handle->blocksofm, handle
 
 /* Weight and transpose_weight tensor declaration */
 LIBXSMM_VLA_DECL(7, element_filter_type, wt, (element_filter_type*)handle->reg_filter->data, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ifmblock, handle->ofmblock, handle->fm_lp_block);
+
+#if defined(TRANSPOSE_COMPUTE)
+/* If we have transposed in the fwd pass, use that data. */
+LIBXSMM_VLA_DECL(7, element_filter_type, tr_wt, (element_filter_type*)handle->trans_filter->data, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ofmblock, handle->ifmblock, handle->fm_lp_block);
+#else
 LIBXSMM_VLA_DECL(7, element_filter_type, tr_wt, (element_filter_type*)handle->scratch1, handle->blocksifm * handle->fm_lp_block, handle->desc.R, handle->desc.S, handle->ofmblock, handle->ifmblock, handle->fm_lp_block);
 
 LIBXSMM_VLA_DECL(6, element_filter_type, temp_wt, (element_filter_type*)handle->scratch1 + (handle->blocksofm * handle->fm_lp_block * handle->blocksifm * handle->fm_lp_block * handle->desc.R * handle->desc.S * handle->ifmblock * handle->ofmblock), handle->blocksifm * handle->fm_lp_block, handle->desc.R, handle->desc.S, handle->ofmblock, handle->ifmblock);
+#endif
 
 /* JIT kernel function pointers */
 libxsmm_convfunction jitted_conv_bp_no_pf, jitted_conv_bp_noweight_pf, jitted_conv_bp_pf;
@@ -108,6 +114,9 @@ jitted_conv_bp_noweight_pf = (libxsmm_convfunction)handle->code_bwd[3].xconv.sco
 #endif
 
 
+#if defined(TRANSPOSE_COMPUTE)
+// TODO(Scott): ?
+#else
 /* transpose last two dimensions of weight tensor for vectorization */
 /* lazy barrier init */
 libxsmm_barrier_init(handle->barrier, ltid);
@@ -174,6 +183,8 @@ if (handle->fm_lp_block == 1) {
 } /* end of if low precision check */
 
 libxsmm_barrier_wait(handle->barrier, ltid);
+
+#endif
 
 /****************************************************************/
 /*******Macros to call jitted function***************************/

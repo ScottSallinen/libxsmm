@@ -28,7 +28,7 @@
  ******************************************************************************/
 /* Alexander Heinecke, Hans Pabst (Intel Corp.)
  ******************************************************************************/
-
+#define TRANSPOSE_COMPUTE  //TODO(Scott): Temporary
 int imgofm1, img, ofm1, ifm1, oj, oi, ofm2, ifm2, kj, ki, ifm1ofm1;
 #if !defined(LIBXSMM_DNN_CONV_FWD_INTERNAL_STRIDE_ONE)
 int ij, ii;
