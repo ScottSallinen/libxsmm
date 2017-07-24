@@ -1620,7 +1620,7 @@ int main(int argc, char* argv[])
   #if defined(TRANSPOSE_COMPUTE)
   libxsmm_free(trans_filter_rsck);
   libxsmm_free(tfilter_libxsmm);
-  #if defined(TRANSPOSE_COMPUTE)
+  #endif
   libxsmm_free(output_libxsmm);
   libxsmm_free(dinput_libxsmm);
   libxsmm_free(dfilter_libxsmm);
