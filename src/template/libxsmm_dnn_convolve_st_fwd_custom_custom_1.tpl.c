@@ -110,8 +110,8 @@ if (handle->datatype != handle->datatype_itm) {
         img = imgofm1/(handle->blocksofm*handle->fm_lp_block);
         ofm1 = imgofm1%(handle->blocksofm*handle->fm_lp_block);
 #if defined(TRANSPOSE_COMPUTE)
-        ikj = (img/handle->desc.R)%(handle->desc.R*handle->desc.S);
-        iki = (img%handle->desc.S)%(handle->desc.R*handle->desc.S);
+        ikj = (img/handle->desc.R);
+        iki = (img%handle->desc.S);
 #endif
 #if defined(INPUT_PADDING)
         if (prev_image != img) {
@@ -295,14 +295,16 @@ if (handle->datatype != handle->datatype_itm) {
                 LIBXSMM_VLA_ACCESS(7, weight,        ofm1, ifm1, ikj, iki, ifm2, ofm2, 0, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ifmblock, handle->ofmblock, handle->fm_lp_block);
             }
           }*/
-          const element_filter_type* src = &LIBXSMM_VLA_ACCESS(7, weight,        ofm1, ifm1, ikj, iki, 0, 0, 0, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ifmblock, handle->ofmblock, handle->fm_lp_block);
-          element_filter_type*       dst = &LIBXSMM_VLA_ACCESS(7, tr_weight_out, ofm1, ifm1, ikj, iki, 0, 0, 0, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ofmblock, handle->ifmblock, handle->fm_lp_block);
-          for (ofm2 = 0; ofm2 < handle->ofmblock; ++ofm2) {  // 16x16 asumption! fm_lp_block assumption! img > R*S assumption!
-              #pragma unroll (16)
-              for (i = 0; i < 16; i++) {
-                tmpbuf[i] = src[i*16 + ofm2];
-              }
-              _mm512_stream_ps(dst + ofm2*16, _mm512_load_ps(&tmpbuf));
+          if (img < (handle->desc.R*handle->desc.S)) {
+            const element_filter_type* src = &LIBXSMM_VLA_ACCESS(7, weight,        ofm1, ifm1, ikj, iki, 0, 0, 0, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ifmblock, handle->ofmblock, handle->fm_lp_block);
+            element_filter_type*       dst = &LIBXSMM_VLA_ACCESS(7, tr_weight_out, ofm1, ifm1, ikj, iki, 0, 0, 0, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ofmblock, handle->ifmblock, handle->fm_lp_block);
+            for (ofm2 = 0; ofm2 < handle->ofmblock; ++ofm2) {  // 16x16 asumption! fm_lp_block assumption! img > R*S assumption!
+                #pragma unroll (16)
+                for (i = 0; i < 16; i++) {
+                  tmpbuf[i] = src[i*16 + ofm2];
+                }
+                _mm512_stream_ps(dst + ofm2*16, _mm512_load_ps(&tmpbuf));
+            }
           }
           #endif
         }
@@ -345,8 +347,8 @@ if (handle->datatype != handle->datatype_itm) {
         img = imgofm1/(handle->blocksofm*handle->fm_lp_block);
         ofm1 = imgofm1%(handle->blocksofm*handle->fm_lp_block);
 #if defined(TRANSPOSE_COMPUTE)
-        ikj = (img/handle->desc.R)%(handle->desc.R*handle->desc.S);
-        iki = (img%handle->desc.S)%(handle->desc.R*handle->desc.S);
+        ikj = (img/handle->desc.R);
+        iki = (img%handle->desc.S);
 #endif
 #if defined(INPUT_PADDING)
         if (prev_image != img) {
@@ -558,14 +560,16 @@ if (handle->datatype != handle->datatype_itm) {
                 LIBXSMM_VLA_ACCESS(7, weight,        ofm1, ifm1, ikj, iki, ifm2, ofm2, 0, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ifmblock, handle->ofmblock, handle->fm_lp_block);
             }
           }*/
-          const element_filter_type* src = &LIBXSMM_VLA_ACCESS(7, weight,        ofm1, ifm1, ikj, iki, 0, 0, 0, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ifmblock, handle->ofmblock, handle->fm_lp_block);
-          element_filter_type*       dst = &LIBXSMM_VLA_ACCESS(7, tr_weight_out, ofm1, ifm1, ikj, iki, 0, 0, 0, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ofmblock, handle->ifmblock, handle->fm_lp_block);
-          for (ofm2 = 0; ofm2 < handle->ofmblock; ++ofm2) {  // 16x16 asumption! fm_lp_block assumption! img > R*S assumption!
-              #pragma unroll (16)
-              for (i = 0; i < 16; i++) {
-                tmpbuf[i] = src[i*16 + ofm2];
-              }
-              _mm512_stream_ps(dst + ofm2*16, _mm512_load_ps(&tmpbuf));
+          if (img < (handle->desc.R*handle->desc.S)) {
+            const element_filter_type* src = &LIBXSMM_VLA_ACCESS(7, weight,        ofm1, ifm1, ikj, iki, 0, 0, 0, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ifmblock, handle->ofmblock, handle->fm_lp_block);
+            element_filter_type*       dst = &LIBXSMM_VLA_ACCESS(7, tr_weight_out, ofm1, ifm1, ikj, iki, 0, 0, 0, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ofmblock, handle->ifmblock, handle->fm_lp_block);
+            for (ofm2 = 0; ofm2 < handle->ofmblock; ++ofm2) {  // 16x16 asumption! fm_lp_block assumption! img > R*S assumption!
+                #pragma unroll (16)
+                for (i = 0; i < 16; i++) {
+                  tmpbuf[i] = src[i*16 + ofm2];
+                }
+                _mm512_stream_ps(dst + ofm2*16, _mm512_load_ps(&tmpbuf));
+            }
           }
           #endif
         }
