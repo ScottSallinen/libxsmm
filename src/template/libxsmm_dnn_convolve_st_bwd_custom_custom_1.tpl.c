@@ -73,8 +73,7 @@ LIBXSMM_VLA_DECL(6, element_output_type, del_out, out, handle->blocksofm, handle
 /* Weight and transpose_weight tensor declaration */
 LIBXSMM_VLA_DECL(7, element_filter_type, wt, (element_filter_type*)handle->reg_filter->data, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ifmblock, handle->ofmblock, handle->fm_lp_block);
 
-#if defined(TRANSPOSE_COMPUTE)
-/* If we have transposed in the fwd pass, use that data. */
+#if defined(TRANSPOSE_COMPUTE)  /* If we have transposed in the fwd pass, use that data. */
 LIBXSMM_VLA_DECL(7, element_filter_type, tr_wt, (element_filter_type*)handle->trans_filter->data, handle->blocksifm, handle->desc.R, handle->desc.S, handle->ofmblock, handle->ifmblock, handle->fm_lp_block);
 #else
 LIBXSMM_VLA_DECL(7, element_filter_type, tr_wt, (element_filter_type*)handle->scratch1, handle->blocksifm * handle->fm_lp_block, handle->desc.R, handle->desc.S, handle->ofmblock, handle->ifmblock, handle->fm_lp_block);
@@ -102,6 +101,14 @@ memset(&LIBXSMM_VLA_ACCESS(3, input_buffer, 0, 0, 0, padded_w, handle->ifmblock)
 LIBXSMM_VLA_DECL(5, element_input_type, input_to_use, del_input, handle->blocksifm * handle->fm_lp_block, handle->ifhp, handle->ifwp, handle->ifmblock);
 #endif
 
+#if defined(TRANSPOSE_COMPUTE)  /* Pre-transpose for the upd pass */
+//#if defined(INPUT_PADDING)
+//LIBXSMM_VLA_DECL(3, element_input_type, tr_input, input_buffer, padded_w, handle->ifmblock);
+//#else
+LIBXSMM_VLA_DECL(5, element_input_type, tr_input, (element_input_type*)handle->trans_grad_input->data, handle->blocksifm * handle->fm_lp_block, handle->ifhp, handle->ifmblock, handle->ifwp);
+//#endif
+#endif
+
 
 #if 0
 /* on KNM prefetches are less costly, so let's avoid some branch mispredicts by running redundant weight prefetches */
@@ -114,9 +121,7 @@ jitted_conv_bp_noweight_pf = (libxsmm_convfunction)handle->code_bwd[3].xconv.sco
 #endif
 
 
-#if defined(TRANSPOSE_COMPUTE)
-// TODO(Scott): ?
-#else
+#if !defined(TRANSPOSE_COMPUTE)
 /* transpose last two dimensions of weight tensor for vectorization */
 /* lazy barrier init */
 libxsmm_barrier_init(handle->barrier, ltid);
@@ -395,8 +400,119 @@ if ( libxsmm_target_archid == LIBXSMM_X86_AVX512_MIC  ||
       /* Probably input padding copy back here */
 #if defined(INPUT_PADDING)
       jitted_matcopyback(copy_ptr, NULL, input_ptr, NULL, NULL);
+      
+      #if defined(TRANSPOSE_COMPUTE)
+      // here - input transpose
+      /* Transpose IFW and IFM into the padded buffer!*/
+      /*
+      for (ij=0; ij < handle->ifhp; ++ij) {
+        for (ii=0; ii < handle->ifwp; ++ii) {
+          for (ifm2 = 0; ifm2 < handle->ifmblock; ++ifm2) {
+            LIBXSMM_VLA_ACCESS(5, tr_input, img, ifm1, ij + handle->desc.pad_h, ifm2, ii + handle->desc.pad_w, handle->blocksifm, padded_h, handle->ifmblock, padded_w)
+              =  (element_output_type)(LIBXSMM_VLA_ACCESS(5, del_input, img, ifm1, ij, ii, ifm2, handle->blocksifm, handle->ifhp, handle->ifwp, handle->ifmblock));
+          }
+        }
+      }
+      */
+      /*
+      float tmpbuf[handle->ifwp*handle->ifmblock];
+      for (ij = 0; ij < handle->ifhp; ++ij) {
+        for (ii = 0; ii < handle->ifwp; ++ii) {
+          for (ifm2 = 0; ifm2 < handle->ifmblock; ++ifm2) {
+            float tmp = LIBXSMM_VLA_ACCESS(3, pad_input_t,             pad_h + ij, pad_w + ii, ifm2, ifw+(2*pad_w), nbIfm);
+            tmpbuf[(ifm2*ifw)+ii] = tmp;
+            LIBXSMM_VLA_ACCESS(5,       input_t, img,  ifm1, ij,         ii,         ifm2, nBIfm, ifhp, ifwp, nbIfm) = tmp;
+          }
+        }
+        float* addr = &LIBXSMM_VLA_ACCESS(5,    tr_input_t, img,  ifm1, ij,       0,           0, nBIfm, ifhp, nbIfm, ifwp);
+        for (ifm2 = 0; ifm2 < nbIfm*ifw; ifm2+=16) {
+          _mm512_stream_ps( addr+ifm2, _mm512_load_ps(tmpbuf+ifm2) );
+        }
+      }
+      */
+      #endif
 #else
-#include "libxsmm_dnn_zero_rim_st_input_custom.tpl.c"
+
+      #if defined(TRANSPOSE_COMPUTE)
+      
+      /*
+      // Fuse zero rim with transpose
+      int pad_cond = (handle->desc.pad_h_in > 0 || handle->desc.pad_w_in > 0);
+      int pad_cond2 = 0;
+
+      element_input_type tmpbuf[handle->ifwp*handle->ifmblock];
+      for (ij=0; ij < handle->ifhp; ++ij) {
+        element_input_type* src = &LIBXSMM_VLA_ACCESS(5, del_input, img, ifm1lpblock, ij, 0, 0, handle->blocksifm*handle->fm_lp_block, handle->ifhp, handle->ifwp, handle->ifmblock);
+        for (ii=0; ii < handle->ifwp; ++ii) {
+          pad_cond2 = ((ij < handle->desc.pad_h_in) || (ij >= (handle->desc.H+handle->desc.pad_h_in)) || (ii < handle->desc.pad_w_in) || (ii >= (handle->desc.W+handle->desc.pad_w_in)));
+          if (pad_cond && pad_cond2) {
+            for (ifm2 = 0; ifm2 < handle->ifmblock; ++ifm2) {
+              src[ii*handle->ifmblock + ifm2] = (element_input_type)0;
+              tmpbuf[ifm2*handle->ifwp + ii] = (element_input_type)0;
+            }
+          } else {
+            for (ifm2 = 0; ifm2 < handle->ifmblock; ++ifm2) {
+              tmpbuf[ifm2*handle->ifwp + ii] = src[ii*handle->ifmblock + ifm2];
+            }
+          }
+        }
+        element_input_type* dst = &LIBXSMM_VLA_ACCESS(5, tr_input, img, ifm1lpblock, ij, 0, 0, handle->blocksifm*handle->fm_lp_block, handle->ifhp, handle->ifmblock, handle->ifwp);
+        for (ifm2 = 0; ifm2 < handle->ifmblock*handle->ifwp; ifm2+=16) {
+          _mm512_stream_ps(dst+ifm2, _mm512_load_ps(tmpbuf+ifm2));
+        }
+      }
+      */
+
+      
+      /*  // Testing perf of stream stores
+      #include "libxsmm_dnn_zero_rim_st_input_custom.tpl.c"
+      element_input_type tmpbuf[16];
+      //element_input_type* src = &LIBXSMM_VLA_ACCESS(5, del_input, img, ifm1lpblock, 0, 0, 0, handle->blocksifm, handle->ifhp, handle->ifwp, handle->ifmblock);
+      //element_input_type* dst = &LIBXSMM_VLA_ACCESS(5, tr_input, img, ifm1lpblock, 0, 0, 0, handle->blocksifm, handle->ifhp, handle->ifmblock, handle->ifwp);
+      element_input_type* dst = &LIBXSMM_VLA_ACCESS(5, tr_input, img, ifm1lpblock, 0, 0, 0, handle->blocksifm*handle->fm_lp_block, handle->ifhp, handle->ifmblock, handle->ifwp);
+      for (ij=0; ij < handle->ifhp*handle->ifwp*16; ij += handle->ifwp*16) {
+        for (ii=0; ii < handle->ifwp*16; ii += 16) {
+          for (ifm2 = 0; ifm2 < 16; ++ifm2) {
+            //tmpbuf[ifm2*handle->ifwp + ii] = src[ii*handle->ifmblock + ifm2];
+            tmpbuf[ifm2] = (element_input_type)1;
+          }
+          _mm512_stream_ps(dst + ij + ii, _mm512_load_ps(tmpbuf));
+        }
+      }
+      */
+      
+      
+      // Testing perf of stream stores
+      #include "libxsmm_dnn_zero_rim_st_input_custom.tpl.c"
+      //element_input_type tmpbuf[16];
+      element_input_type* src = &LIBXSMM_VLA_ACCESS(5, del_input, img, ifm1lpblock, 0, 0, 0, handle->blocksifm*handle->fm_lp_block, handle->ifhp, handle->ifwp, handle->ifmblock);
+      //element_input_type* dst = &LIBXSMM_VLA_ACCESS(5, tr_input, img, ifm1lpblock, 0, 0, 0, handle->blocksifm*handle->fm_lp_block, handle->ifhp, handle->ifmblock, handle->ifwp);
+      for (ij=0; ij < handle->ifhp*handle->ifwp*16; ij += handle->ifwp*16) {
+        for (ii=0; ii < handle->ifwp*16; ii += 16) {
+         __m512 blubb = _mm512_add_ps(_mm512_set1_ps(1.0f), _mm512_load_ps(src + ij + ii));
+          _mm512_store_ps(src + ij + ii, blubb);
+        }
+      }
+      
+
+      /*  // Testing direct stores
+      #include "libxsmm_dnn_zero_rim_st_input_custom.tpl.c"
+      for (ij=0; ij < handle->ifhp; ++ij) {
+        for (ii=0; ii < handle->ifwp; ++ii) {
+          for (ifm2 = 0; ifm2 < handle->ifmblock; ++ifm2) {
+            LIBXSMM_VLA_ACCESS(5, tr_input, img, ifm1, ij, ifm2, ii, handle->blocksifm, handle->ifhp, handle->ifmblock, handle->ifwp)
+              =  (element_output_type)(LIBXSMM_VLA_ACCESS(5, del_input, img, ifm1, ij, ii, ifm2, handle->blocksifm, handle->ifhp, handle->ifwp, handle->ifmblock));
+          }
+        }
+      }
+      */
+      
+      #else
+       // Just do zero rim
+      #include "libxsmm_dnn_zero_rim_st_input_custom.tpl.c"
+      #endif
+
+
 #endif
       /* down-convert for low precision*/
       if (handle->datatype != handle->datatype_itm) {
@@ -526,8 +642,37 @@ if ( libxsmm_target_archid == LIBXSMM_X86_AVX512_MIC  ||
       /* Probably input padding copy back here */
 #if defined(INPUT_PADDING)
       jitted_matcopyback(copy_ptr, NULL, input_ptr, NULL, NULL);
+      // cp here //defined(TRANSPOSE_COMPUTE)
 #else
-#include "libxsmm_dnn_zero_rim_st_input_custom.tpl.c"
+    #if defined(TRANSPOSE_COMPUTE)
+      // Fuse zero rim with transpose
+      int pad_cond = (handle->desc.pad_h_in > 0 || handle->desc.pad_w_in > 0);
+      int pad_cond2 = 0;
+
+      element_input_type tmpbuf[handle->ifwp*handle->ifmblock];
+      for (ij=0; ij < handle->ifhp; ++ij) {
+        element_input_type* src = &LIBXSMM_VLA_ACCESS(5, del_input, img, ifm1lpblock, ij, 0, 0, handle->blocksifm*handle->fm_lp_block, handle->ifhp, handle->ifwp, handle->ifmblock);
+        for (ii=0; ii < handle->ifwp; ++ii) {
+          pad_cond2 = ((ij < handle->desc.pad_h_in) || (ij >= (handle->desc.H+handle->desc.pad_h_in)) || (ii < handle->desc.pad_w_in) || (ii >= (handle->desc.W+handle->desc.pad_w_in)));
+          if (pad_cond && pad_cond2) {
+            for (ifm2 = 0; ifm2 < handle->ifmblock; ++ifm2) {
+              src[ii*handle->ifmblock + ifm2] = (element_input_type)0;
+              tmpbuf[ifm2*handle->ifwp + ii] = (element_input_type)0;
+            }
+          } else {
+            for (ifm2 = 0; ifm2 < handle->ifmblock; ++ifm2) {
+              tmpbuf[ifm2*handle->ifwp + ii] = src[ii*handle->ifmblock + ifm2];
+            }
+          }
+        }
+        element_input_type* dst = &LIBXSMM_VLA_ACCESS(5, tr_input, img, ifm1lpblock, ij, 0, 0, handle->blocksifm*handle->fm_lp_block, handle->ifhp, handle->ifmblock, handle->ifwp);
+        for (ifm2 = 0; ifm2 < handle->ifmblock*handle->ifwp; ifm2+=16) {
+          _mm512_stream_ps(dst+ifm2, _mm512_load_ps(tmpbuf+ifm2));
+        }
+      }
+     #else
+       #include "libxsmm_dnn_zero_rim_st_input_custom.tpl.c" 
+     #endif
 #endif
       /* down-convert for low precision*/
       if (handle->datatype != handle->datatype_itm) {
